@@ -1,3 +1,8 @@
+
+
+## 7.1.4
+- Updated Facebook Android SDK to 18.1.3
+
 ## 7.1.3
 - Updated Facebook iOS SDK to 18.0.2
 
