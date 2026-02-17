@@ -5,6 +5,7 @@
 //  Created by Darwin Morocho on 11/10/20.
 //
 
+import FBSDKCoreKit
 import FBSDKLoginKit
 import Flutter
 import Foundation
@@ -105,8 +106,10 @@ class FacebookAuth: NSObject {
         
         let isLimitedLogin = _DomainHandler.sharedInstance().isDomainHandlingEnabled() && !Settings.shared.isAdvertiserTrackingEnabled
         
+        let permissionSet = Set(permissions.map { Permission(name: $0) })
+        
         guard let configuration = LoginConfiguration(
-            permissions: permissions,
+            permissions: permissionSet,
             tracking: isLimitedLogin ? .limited : tracking,
             nonce: nonce ?? UUID().uuidString
         )
@@ -117,23 +120,22 @@ class FacebookAuth: NSObject {
         let viewController: UIViewController = (mainWindow?.rootViewController)!
         
         loginManager.logIn(
-            viewController: viewController,
-            configuration: configuration ,
-            completion: {
-                [weak self] result in
-                guard let self else {
+            configuration: configuration,
+            from: viewController,
+            handler: { [weak self] loginResult, error in
+                guard let self = self else {
                     return
                 }
                 
-                switch result {
-                case .failed(let error):
-                    finishWithError(errorCode: "FAILED", message: error.localizedDescription)
-                case .cancelled:
-                    finishWithError(errorCode: "CANCELLED", message: "User has cancelled login with facebook")
-               
-                case .success(granted: let granted, declined: let declined, token: let token):
-                    setIsLimitedLogin(isLimitedLogin)
-                    finishWithResult(
+                if let error = error {
+                    self.finishWithError(errorCode: "FAILED", message: error.localizedDescription)
+                } else if loginResult?.isCancelled ?? true {
+                    self.finishWithError(errorCode: "CANCELLED", message: "User has cancelled login with facebook")
+                } else {
+                    // Success
+                    let token = loginResult!.token
+                    self.setIsLimitedLogin(isLimitedLogin)
+                    self.finishWithResult(
                         data: self.getAccessToken(
                             accessToken: token,
                             authenticationToken: AuthenticationToken.current,
@@ -141,7 +143,6 @@ class FacebookAuth: NSObject {
                         )
                     )
                 }
-                
             }
         )
     }
@@ -210,16 +211,20 @@ class FacebookAuth: NSObject {
     ) -> [String: Any] {
         print(isLimitedLogin)
         if isLimitedLogin || accessToken == nil {
-            return [
-                "type": "limited",
-                "userId": Profile.current?.userID,
-                "userEmail": Profile.current?.email,
-                "userName": Profile.current?.name,
-                "token": authenticationToken?.tokenString,
-                "nonce": authenticationToken?.nonce,
-            ]
+            if let authToken = authenticationToken {
+                let claims = authToken.claims
+                return [
+                    "type": "limited",
+                    "userId": claims["sub"] as? String,
+                    "userEmail": claims["email"] as? String,
+                    "userName": claims["name"] as? String,
+                    "token": authToken.tokenString,
+                    "nonce": authToken.nonce,
+                ]
+            } else {
+                return [:] // Fallback empty dict if no token
+            }
         }
-       
         
         return [
             "type": "classic",
@@ -227,8 +232,8 @@ class FacebookAuth: NSObject {
             "userId": accessToken!.userID,
             "expires": Int64((accessToken!.expirationDate.timeIntervalSince1970 * 1000).rounded()),
             "applicationId": accessToken!.appID,
-            "grantedPermissions": accessToken!.permissions.map { item in item.name },
-            "declinedPermissions": accessToken!.declinedPermissions.map { item in item.name },
+            "grantedPermissions": accessToken!.permissions.map { $0.name },
+            "declinedPermissions": accessToken!.declinedPermissions.map { $0.name },
             "authenticationToken": authenticationToken?.tokenString,
         ] as [String: Any]
     }
